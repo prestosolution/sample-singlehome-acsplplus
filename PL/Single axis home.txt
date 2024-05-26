@@ -1,0 +1,283 @@
+! - Axis 1 Home program
+! - User Unit : mm
+! - Modifiers : jkim
+
+GLOBAL INT HomeFlag(64)
+GLOBAL REAL Save(64)(5)
+INT Second, HomingBuffer, AXIS, ACS_Drive, Direction, Repeatability_Patch
+REAL Search_Vel, Commut_current, Home_Offset
+
+!*****************************************************************************
+! User Define Variable
+AXIS = 0
+HomingBuffer = 1
+ACS_Drive = 0	! Yes = 1, No = 0
+Direction = -1	! Right = 1, Left = -1
+
+Search_Vel = 30
+Home_Offset = 0
+Repeatability_Patch = 0
+!*****************************************************************************
+
+!*****************************************************************************
+! Define to default
+Second = 1000
+Commut_current = XRMS(AXIS) * 0.7
+HomeFlag(AXIS) = 0
+!*****************************************************************************
+
+!*****************************************************************************
+! Set parameters for motor flags
+DISP "Buffer %d: %d axis homing start", HomingBuffer, AXIS
+DISABLE (AXIS)
+TILL ^MST(AXIS).#ENABLED, (2*Second)
+IF MST(AXIS).#ENABLED
+	DISP "Buffer %d: %d axis disable failure", HomingBuffer, AXIS
+	GOTO Time_Out
+END
+WAIT 100
+
+SAFETYGROUP(AXIS)
+Save(AXIS)(0) = VEL(AXIS)
+Save(AXIS)(1) = ACC(AXIS)
+Save(AXIS)(2) = DEC(AXIS)
+Save(AXIS)(3) = KDEC(AXIS)
+Save(AXIS)(4) = JERK(AXIS)
+
+MFLAGS(AXIS).#DEFCON	= 1
+MFLAGS(AXIS).#OPEN		= 0
+!*****************************************************************************
+CERRI(AXIS) = 1
+CERRA(AXIS) = 1
+CERRV(AXIS) = 1
+!*****************************************************************************
+!Set Dynamic brake Off
+VELBRK(AXIS) = XVEL(AXIS)
+MFLAGS(AXIS).#DBRAKE = 0
+!*****************************************************************************
+
+!*****************************************************************************
+! Set Motion parameters for homing
+VEL(AXIS)	= Search_Vel
+ACC(AXIS)	= VEL(AXIS)*10
+DEC(AXIS)	= ACC(AXIS)
+JERK(AXIS)	= ACC(AXIS)*3
+KDEC(AXIS)	= JERK(AXIS)
+!*****************************************************************************
+
+!*****************************************************************************
+! Disable the default response of the hardware and software limits
+FMASK(AXIS).#CPE	= 1
+FMASK(AXIS).#RL		= 1
+FMASK(AXIS).#LL		= 1
+FDEF(AXIS).#CPE		= 1
+FDEF(AXIS).#RL		= 0
+FDEF(AXIS).#LL		= 0
+FDEF(AXIS).#SRL		= 0
+FDEF(AXIS).#SLL		= 0
+WAIT 10
+!*****************************************************************************
+
+!*****************************************************************************
+! Commutation for each motor
+IF ACS_Drive = 1
+	IF ^MFLAGS(AXIS).#HALL
+		IF ^MFLAGS(AXIS).#BRUSHOK
+			ENABLE (AXIS)
+			TILL MST(AXIS).#ENABLED, (2*Second)
+			IF ^MST(AXIS).#ENABLED
+				DISP "Buffer %d: %d axis enable failure", HomingBuffer, AXIS
+				GOTO Time_Out
+			END
+			WAIT 500
+			COMMUT (AXIS), Commut_current
+			TILL MFLAGS(AXIS).#BRUSHOK, (10*Second)
+			IF ^MFLAGS(AXIS).#BRUSHOK
+				DISP "Buffer %d: %d axis commutation failure", HomingBuffer, AXIS
+				GOTO Time_Out
+			END
+		DISABLE (AXIS)
+		WAIT 500
+		DISP "Buffer %d: %d axis commutation complete", HomingBuffer, AXIS
+		END
+	END
+ELSEIF ACS_Drive = 0
+ELSE
+	DISP "Buffer %d: %d axis homing program error: Drive is not selected", HomingBuffer, AXIS
+	GOTO Time_Out
+END
+!*****************************************************************************
+
+!*****************************************************************************
+! Start homing - look for limit switch
+DISP "Buffer %d: %d axis move to search limit", HomingBuffer, AXIS
+ENABLE (AXIS)
+TILL MST(AXIS).#ENABLED, (2*Second)
+IF ^MST(AXIS).#ENABLED
+	DISP "Buffer %d: %d axis enable failure", HomingBuffer, AXIS
+	GOTO Time_Out
+END
+WAIT 100
+IF Direction = 1
+	IF ^FAULT(AXIS).#RL
+		JOG (AXIS), +
+		TILL FAULT(AXIS).#RL, (60*Second)
+		IF ^FAULT(AXIS).#RL
+			DISP "Buffer %d: %d axis search limit failure", HomingBuffer, AXIS
+			GOTO Time_Out
+		END
+		HALT (AXIS)
+		TILL MST(AXIS).#INPOS, (10*Second)
+		IF ^MST(AXIS).#INPOS
+			DISP "Buffer %d: %d axis inposition failure", HomingBuffer, AXIS
+			GOTO Time_Out
+		END
+	END
+	WAIT 300
+	JOG/V (AXIS), (-Search_Vel/5)
+	TILL ^FAULT(AXIS).#RL, (10*Second)
+	IF FAULT(AXIS).#RL
+		DISP "Buffer %d: %d axis get out limit failure", HomingBuffer, AXIS
+		GOTO Time_Out
+	END
+ELSEIF Direction = -1
+	IF ^FAULT(AXIS).#LL
+		JOG (AXIS), -
+		TILL FAULT(AXIS).#LL, (60*Second)
+		IF ^FAULT(AXIS).#LL
+			DISP "Buffer %d: %d axis search limit failure", HomingBuffer, AXIS
+			GOTO Time_Out
+		END
+		HALT (AXIS)
+		TILL MST(AXIS).#INPOS, (10*Second)
+		IF ^MST(AXIS).#INPOS
+			DISP "Buffer %d: %d axis inposition failure", HomingBuffer, AXIS
+			GOTO Time_Out
+		END
+	END
+	WAIT 300
+	JOG/V (AXIS), (Search_Vel/5)
+	TILL ^FAULT(AXIS).#LL, (10*Second)
+	IF FAULT(AXIS).#LL
+		DISP "Buffer %d: %d axis get out limit failure", HomingBuffer, AXIS
+		GOTO Time_Out
+	END
+ELSE
+	DISP "Buffer %d: %d axis homing program error: Direction is not selected", HomingBuffer, AXIS
+	GOTO Time_Out
+END
+HALT (AXIS)
+TILL MST(AXIS).#INPOS, (10*Second)
+IF ^MST(AXIS).#INPOS
+	DISP "Buffer %d: %d axis inposition failure", HomingBuffer, AXIS
+	GOTO Time_Out
+END
+WAIT 500
+
+DISP "Buffer %d: %d axis search limit complete, move to search index", HomingBuffer, AXIS
+IST(AXIS).#IND = 1
+WAIT 10
+IST(AXIS).#IND = 0
+JOG/V (AXIS), (-Direction*Search_Vel/2)
+TILL IST(AXIS).#IND, (40*Second)
+IF ^IST(AXIS).#IND
+	DISP "Buffer %d: %d axis search index failure", HomingBuffer, AXIS
+	GOTO Time_Out
+END
+HALT (AXIS)
+TILL MST(AXIS).#INPOS, (10*Second)
+IF ^MST(AXIS).#INPOS
+	DISP "Buffer %d: %d axis inposition failure", HomingBuffer, AXIS
+	GOTO Time_Out
+END
+WAIT 500
+IF Repeatability_Patch
+	PTP/E (AXIS), IND(AXIS) + POW(2,(E_SCMUL(AXIS)-3))*EFAC(AXIS)
+	TILL MST(AXIS).#INPOS, (10*Second)
+	IF ^MST(AXIS).#INPOS
+		DISP "Buffer %d: %d axis inposition failure", HomingBuffer, AXIS
+		GOTO Time_Out
+	END
+	WAIT 500
+	SET FPOS(AXIS) = FPOS(AXIS) - IND(AXIS) - GETCONF(265, AXIS)
+ELSE
+	SET FPOS(AXIS) = FPOS(AXIS) - IND(AXIS)
+END
+WAIT 500
+DISP "Buffer %d: %d axis search index complete", HomingBuffer, AXIS
+!*****************************************************************************
+
+!*****************************************************************************
+! Move to offset
+PTP/E AXIS, Home_Offset
+TILL MST(AXIS).#INPOS, (10*Second)
+IF ^MST(AXIS).#INPOS
+	DISP "Buffer %d: %d axis inposition failure", HomingBuffer, AXIS
+	GOTO Time_Out
+END
+WAIT 1000
+SET RPOS(AXIS) = 0
+WAIT 100
+!*****************************************************************************
+
+!*****************************************************************************
+! Set software limits and unmask left/right limit faults
+FMASK(AXIS).#CPE	= 1
+FMASK(AXIS).#RL		= 1
+FMASK(AXIS).#LL		= 1
+FDEF(AXIS).#CPE		= 1
+FDEF(AXIS).#RL		= 1
+FDEF(AXIS).#LL		= 1
+FDEF(AXIS).#SRL		= 0
+FDEF(AXIS).#SLL		= 0
+!*****************************************************************************
+
+!*****************************************************************************
+! Set home done flags and encoder filter
+HomeFlag(AXIS) = 1
+DISP "Buffer %d: %d axis homing complete", HomingBuffer, AXIS
+!*****************************************************************************
+
+!*****************************************************************************
+! Restore previous motion parameters
+Restore:
+VEL(AXIS)	= Save(AXIS)(0)
+ACC(AXIS)	= Save(AXIS)(1)
+DEC(AXIS)	= Save(AXIS)(2)
+KDEC(AXIS)	= Save(AXIS)(3)
+JERK(AXIS)	= Save(AXIS)(4)
+!*****************************************************************************
+STOP
+
+!*****************************************************************************
+! Time out
+Time_Out:
+DISP "Buffer %d: %d axis homing failure, Time_Out", HomingBuffer, AXIS
+HALT (AXIS)
+TILL MST(AXIS).#INPOS, (10*Second)
+IF ^MST(AXIS).#INPOS
+	DISP "Buffer %d: %d axis inposition failure", HomingBuffer, AXIS
+	DISABLE (AXIS)
+	STOP
+END
+DISABLE (AXIS)
+GOTO Restore
+STOP
+!*****************************************************************************
+
+!*****************************************************************************
+! Set software limits and unmask left/right limit faults
+ON ^PST(1).#RUN
+HomingBuffer = 1
+AXIS = 0
+FMASK(AXIS).#CPE	= 1
+FMASK(AXIS).#RL		= 1
+FMASK(AXIS).#LL		= 1
+FDEF(AXIS).#CPE		= 1
+FDEF(AXIS).#RL		= 1
+FDEF(AXIS).#LL		= 1
+FDEF(AXIS).#SRL		= 0
+FDEF(AXIS).#SLL		= 0
+DISP "Buffer %d: %d axis safety enable all", HomingBuffer, AXIS
+RET
+!*****************************************************************************
