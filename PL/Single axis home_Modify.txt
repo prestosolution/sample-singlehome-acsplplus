@@ -1,7 +1,6 @@
 ! - Axis 1 Home program
 ! - User Unit : mm
 ! - Modifiers : jkim
-! - abc
 
 GLOBAL INT HomeFlag(64)
 GLOBAL REAL Save(64)(5)
